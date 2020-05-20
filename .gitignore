@@ -1,0 +1,9 @@
+# Don't include any assets
+Faces/*
+Items/*
+music/*
+Niko/*
+Objects/*
+sounds/*
+tiles/*
+

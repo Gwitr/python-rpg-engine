@@ -1,0 +1,4 @@
+Name
+TEST
+Icon
+icon.png
