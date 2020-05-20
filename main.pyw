@@ -44,7 +44,7 @@ class Layer():
 
 class Game():
 
-    def get_state(self):
+    def get_state(self): 
         return self._state
 
     def set_state(self, x):
@@ -209,24 +209,28 @@ class Game():
     def inventory_state(self):
         if self.mode == 1:
             if self.keys[pygame.K_RIGHT]:
+                self.assets["sounds"]["menu_cursor"].play()
                 self.player.highlighted_item += 1
                 if self.player.highlighted_item >= len(self.player.inventory):
                     self.player.highlighted_item = len(self.player.inventory) - 1
                 self.mode = 3
 
             if self.keys[pygame.K_LEFT]:
+                self.assets["sounds"]["menu_cursor"].play()
                 self.player.highlighted_item -= 1
                 if self.player.highlighted_item < 0:
                     self.player.highlighted_item = 0
                 self.mode = 4
 
             if self.keys[pygame.K_UP]:
+                self.assets["sounds"]["menu_cursor"].play()
                 self.player.highlighted_item -= 2
                 if self.player.highlighted_item < 0:
                     self.player.highlighted_item = 0
                 self.mode = 5
 
             if self.keys[pygame.K_DOWN]:
+                self.assets["sounds"]["menu_cursor"].play()
                 self.player.highlighted_item += 1
                 if self.player.highlighted_item >= len(self.player.inventory):
                     self.player.highlighted_item = len(self.player.inventory) - 1
@@ -236,9 +240,12 @@ class Game():
                 self.mode = 7
                 if self.player.highlighted_item == self.player.held_item:
                     self.player.held_item = -1
+                    self.assets["sounds"]["menu_cancel"].play()
                 elif self.player.held_item == -1:
                     self.player.held_item = self.player.highlighted_item
+                    self.assets["sounds"]["menu_decision"].play()
                 else:
+                    self.assets["sounds"]["menu_decision"].play()
                     self.mode = 8
         
         
@@ -340,6 +347,7 @@ class Game():
         self.switch_state("Main game state")
 
     def __init__(self):
+        pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
         # pygame.mixer.music.set_volume(0)
         descs = open(r"Item Descriptions.txt", encoding="utf-8-sig").read().split("\n")
@@ -417,6 +425,11 @@ class Game():
             
             self.time = time.time()
             self.state_map[self.state]()
+            if self.player.held_item != -1:
+                self.display.blit(
+                    self.assets["items2x"][self.player.inventory[self.player.held_item]],
+                    (580, 420)
+                )
             self.state_frame += 1
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
