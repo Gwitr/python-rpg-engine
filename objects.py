@@ -1,6 +1,7 @@
 import time
 import math
 import pygame
+import traceback
 
 class Object():
     def __init__(self, name, keyvalues, game):
@@ -13,23 +14,32 @@ class Object():
         self.x = float(self.keyvalues.get("Position X", "0.0"))
         self.y = float(self.keyvalues.get("Position Y", "0.0"))
 
+        self._current_input = "<Not in input>"
+
     # async def input_kill(self, arg):
     #     self.game.LogInfo("Killed %s %s" % (self.name, self))
     #     self.game.objects.remove(self)
 
     def trigger_input(self, input, argument):
+        self._current_input = input
+        
         if input.lower() == "kill":
-            self.game.objects.remove(self)
+            try:
+                self.game.objects.remove(self)
+            except KeyError:
+                self.game.LogWarning("Cannot remove self")
             return
         if not hasattr(self, "input_" + input.lower()):
             m = {v: k for k, v in NAME2OBJTYPE.items()}
             self.game.LogWarning("[%s;%s] Unknown input %s" % (m[self.__class__], self.name, input.lower()))
             return []
-        try:
+        if 1: # try:
             getattr(self, "input_" + input.lower())(argument)
-        except Exception as e:
-            self.game.LogError("In %s" % (self.name))
-            self.game.LogError(traceback.format_exc())
+        # except Exception as e:
+            # self.game.LogError("In %s" % (self.name))
+            # self.game.LogError(traceback.format_exc())
+        
+        self._current_input = "<Not in input>"
 
     def trigger_output(self, a, b=None, c=None):
         if b == None:
@@ -38,7 +48,7 @@ class Object():
                 self.trigger_output(target, input, arg)
             except KeyError:
                 m = {v: k for k, v in NAME2OBJTYPE.items()}
-                self.game.LogWarning("[%s;%s] Unknown output %s" % (m[self.__class__], self.name, a.lower()))
+                # self.game.LogWarning("[%s;%s] Unknown output %s" % (m[self.__class__], self.name, a.lower()))
         else:
             if c == None:
                 raise TypeError("Either (a, b, c) or just a have to be set")
@@ -50,8 +60,8 @@ class Object():
                 objs = self.game.objects.copy()
                 for obj in objs:
                     if obj.name == a:
-                        self.game.LogInfo("%s => %s   %s(%s)" % (self.name, a, b, c))
-                        obj.trigger_input(b, c)
+                        self.game.LogInfo("%s %s => %s   %s(%s)" % (self.name, self._current_input, a, b, c))
+                        self.game.schedule_input(obj, b, c)
 
     def decode_output(self, output, delim=":"):
         return output.split(delim)[:-1]
@@ -69,21 +79,37 @@ class Object():
         ...
 
 class Music(Object):
+
+    def input_start(self, arg):
+        if self.game.music_persistent:
+            self.game.objects.remove(self)
+        else:
+            self.game.music_persistent = int(self.keyvalues["Persistent"]) > 0
     
     def update(self):
         if not hasattr(self, "last_time"):
-            track = self.keyvalues["track"]
-            if track in self.game.assets["music"]:
-                pygame.mixer.music.load(self.game.assets["music"][track])
-                pygame.mixer.music.play()
-            else:
-                self.game.LogError("Couldn't load resource music/%s" % (track))
+            self.reload_song()
+        
+        if (self.game.time - self.last_time) > float(self.keyvalues["length"]):
             self.last_time = self.game.time
-            self.keyvalues["length"] = float(self.keyvalues["length"])
-        if (self.game.time - self.last_time) > self.keyvalues["length"]:
-            self.last_time = time
+
+            self.reload_song()
+            
             pygame.mixer.music.rewind()
             pygame.mixer.music.play()
+
+    def reload_song(self):
+        track = self.keyvalues["track"]
+        if track in self.game.assets["music"]:
+            pygame.mixer.music.load(self.game.assets["music"][track])
+            pygame.mixer.music.play()
+        else:
+            self.game.LogError("Couldn't load resource music/%s" % (track))
+        self.last_time = self.game.time
+
+    def game_state_changed(self, to, res):
+        if not (to == "Load data state" and self.game.music_persistent):
+            super().game_state_changed(to, res)
 
 class TriggerOnce(Object):
 
@@ -187,6 +213,9 @@ class Merge(Object):
 
 class PlayerMove(Object):
 
+    def input_start(self, a):
+        self.trigger_output("start")
+
     def input_enablemovement(self, a):
         self.game.player.locked = False
 
@@ -250,6 +279,8 @@ class Interactible(Object):
         self.trigger_output("OnUse")
         if self.game.player.held_item != -1:
             self.trigger_output("OnUse-" + self.game.player.inventory[self.game.player.held_item])
+        else:
+            self.trigger_output("OnUse-NothingHeld")
 
     def input_moveto(self, a):
         self.lastmove = 0
@@ -258,6 +289,11 @@ class Interactible(Object):
         self.mode = ""
 
     def update(self):
+        if self.keyvalues["sprite"] in self.game.assets["objects"]:
+            self.sprite = self.game.assets["objects"][self.keyvalues["sprite"]]
+        else:
+            self.sprite = None
+        
         if not hasattr(self, "mode"):
             self.mode = ""
             self.to = None
@@ -367,16 +403,31 @@ class ChangeLevel(Object):
         self.arg = None
 
     def input_change(self, arg):
-        self.game.level = int(self.keyvalues["level"])
-        self.game.switch_state("Load data state")
         self.arg = arg
+        self.game.level = int(self.keyvalues["level"]) - 1
+        
+        self.game.switch_state("Load data state")
+        # self.game.player.pos = [float(arg[0:3].strip('0')), float(arg[3:6].strip('0'))]
+        # print("ChangeLevel input_change!!! ============", self.name, arg)
 
     def game_state_changed(self, to, res):
-        if to == "Main game state":
+        # print("ChangeLevel game_state_changed!!! ============== ", self.name, self.arg, to)
+        if to == "Load data state":
             if self.arg is not None:
                 # My time has come
                 self.game.player.pos = [int(self.arg[:3]), int(self.arg[3:])]
                 self.game.objects.remove(self)
+
+class Persistent(Object):
+
+    def input_set(self, arg):
+        self.game.persistent_values[int(self.keyvalues["variable"])] = arg
+
+    def input_checkequal(self, arg):
+        if self.game.persistent_values[int(self.keyvalues["variable"])] == arg:
+            self.trigger_output("Equal")
+        else:
+            self.trigger_output("NotEqual")
 
 def mini(*a):
     best = float("+inf")
@@ -388,7 +439,7 @@ def mini(*a):
     return besti
 
 NAME2OBJTYPE = {
-    "music": Music, "trigger_once": TriggerOnce, "textbox": Textbox, "player_move": PlayerMove, "trigger_multiple": TriggerMultiple,
-    "equip": Equip, "broadcaster": Broadcaster, "merge": Merge, "sound": Sound, "interactible": Interactible, "mode": Mode,
-    "equal": Equal, "changelevel": ChangeLevel
+    "<none>": Object, "music": Music, "trigger_once": TriggerOnce, "textbox": Textbox, "player_move": PlayerMove,
+    "trigger_multiple": TriggerMultiple, "equip": Equip, "broadcaster": Broadcaster, "merge": Merge, "sound": Sound,
+    "interactible": Interactible, "mode": Mode, "equal": Equal, "changelevel": ChangeLevel, "persistent": Persistent
 }

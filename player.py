@@ -6,7 +6,7 @@ import getpass
 class Player():
 
     def __init__(self):
-        self.pos = [9, 9]
+        self.pos = [15, 12]
         self.inventory = []
         self.name = getpass.getuser()  # (:
         self.lastdir = 0
@@ -20,19 +20,19 @@ class Player():
         if self.lastpos is not None:
             if math.dist(self.lastpos, self.pos) >= 0.8:
                 self.lastpos = None
-            if (time.time() - self.last_animation_update) > .11:
+            if (time.time() - self.last_animation_update) > .15:
                 self.last_animation_update = time.time()
                 self.animation_frame += 1
                 if self.animation_frame > 3:
                     self.animation_frame = 0
             if self.lastdir == 0:
-                self.pos[1] -= 2* (time.time() - game.prev_frame_time)
+                self.pos[1] -= 3.2 * (time.time() - game.prev_frame_time)
             if self.lastdir == 3:
-                self.pos[1] += 2 * (time.time() - game.prev_frame_time)
+                self.pos[1] += 3.2 * (time.time() - game.prev_frame_time)
             if self.lastdir == 1:
-                self.pos[0] -= 2 * (time.time() - game.prev_frame_time)
+                self.pos[0] -= 3.2 * (time.time() - game.prev_frame_time)
             if self.lastdir == 2:
-                self.pos[0] += 2 * (time.time() - game.prev_frame_time)
+                self.pos[0] += 3.2 * (time.time() - game.prev_frame_time)
         else:
             self.pos[0] = int(round(self.pos[0]))
             self.pos[1] = int(round(self.pos[1]))

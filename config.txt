@@ -2,3 +2,5 @@ Name
 TEST
 Icon
 icon.png
+Editor
+1

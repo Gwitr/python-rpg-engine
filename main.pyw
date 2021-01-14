@@ -4,10 +4,12 @@ import time
 import math
 import pygame
 import traceback
+import threading
 
 from objects import *
 from utilities import *
 from player import Player
+from editor import EditorThread
 
 import extensions
 
@@ -40,7 +42,43 @@ class Layer():
 
                 y2 = self.game.resolution[1] - y2
 
-                self.game.display.blit(self.game.assets["tiles"][cell], (x2, y2))
+                try:
+                    self.game.display.blit(self.game.assets["tiles"][cell], (x2, y2))
+                except KeyError:
+                    ...
+
+import code
+class _Resume():
+
+    """Exit from code.interact(...).
+
+Example:
+  _Resume.interact(local=locals())
+  print("Exited interactive shell.")
+
+Example (in interactive shell):
+  >>> resume
+  Exited interactive shell.
+"""
+    
+    @classmethod
+    def interact(cls, **kwargs):
+        d = {"resume": cls()}
+        if "local" in kwargs:
+            d.update(kwargs.pop("local"))
+
+        try:
+            code.interact(local=d, **kwargs)
+        except SystemExit:
+            if not d["resume"].resumed:
+                raise
+
+    def __init__(self):
+        self.resumed = False
+    
+    def __repr__(self):
+        self.resumed = True
+        raise SystemExit(0)
 
 class Game():
 
@@ -56,10 +94,6 @@ class Game():
     def main_game_state(self):
         # pygame.mixer.music.set_volume(0)
         self.player.update(self)
-                
-        x = self.objects.copy()
-        for i in x:
-            i.update()
 
         self.display.fill(0)
         self.layer1.render()
@@ -72,7 +106,7 @@ class Game():
             key=lambda x: (x.y if issubclass(type(x), Object) else x.pos[1]),
             reverse=True
         )
-
+        
         # Render all objects
         for i in arr:
             if issubclass(type(i), Object):
@@ -251,22 +285,25 @@ class Game():
         
         self.display.blit(self.inv_img_top, (15, 15))
         self.display.blit(self.inv_img_bottom, (15, 94))
-        desc = self.item_descs[self.player.inventory[self.player.highlighted_item]]
+        desc = "No item selected."
+        if len(self.player.inventory) > 0:
+            desc = self.item_descs[self.player.inventory[self.player.highlighted_item]]
+
+            if self.player.highlighted_item % 2 == 0:
+                self.display.blit(self.inv_sel, (
+                    31,
+                    (self.player.highlighted_item // 2) * 32 + 110
+                ))
+            else:
+                self.display.blit(self.inv_sel, (
+                    332,
+                    (self.player.highlighted_item // 2) * 32 + 110
+                ))
+
         self.display.blit(
             self.mainfont.render(desc, True, [255, 255, 255], [24, 12, 25]),
             (320 - self.mainfont.size(desc)[0] // 2, 35)
         )
-
-        if self.player.highlighted_item % 2 == 0:
-            self.display.blit(self.inv_sel, (
-                31,
-                (self.player.highlighted_item // 2) * 32 + 110
-            ))
-        else:
-            self.display.blit(self.inv_sel, (
-                332,
-                (self.player.highlighted_item // 2) * 32 + 110
-            ))
         
         for i in range(len(self.player.inventory)):
             if i == self.player.held_item:
@@ -340,14 +377,17 @@ class Game():
     def load_data_state(self):
         print("loading", self.level)
         self.load_level(self.level)
-        for i in self.objects:
+        for i in self.objects.copy():
             if not i.started:
                 i.trigger_input("Start", "")
                 i.started = True
         self.switch_state("Main game state")
 
+    def schedule_input(self, target, input, arg):
+        self.scheduled_inputs.append((target, input, arg))
+
     def __init__(self):
-        pygame.mixer.pre_init(44100, -16, 2, 512)
+        pygame.mixer.pre_init(44100, -16, 2, 2048)
         pygame.init()
         # pygame.mixer.music.set_volume(0)
         descs = open(r"Item Descriptions.txt", encoding="utf-8-sig").read().split("\n")
@@ -369,6 +409,11 @@ class Game():
         self.levels = [i[1:-1] if i[0:1] == "\"" else i for i in x.split("\n")]
         self.state_result = None
         self.state_args = []
+        self.persistent_values = ["" for i in range(100)]
+        self.scheduled_inputs = []
+        self.objects = OrderedSet()
+        self.music_persistent = False
+        self.running = False
         self.assets = {
             "tiles": {},
             "objects": {},
@@ -380,7 +425,7 @@ class Game():
             "items2x": {},
         }
         for i in os.listdir("tiles"):
-            self.assets["tiles"][int(i.split(".")[0])] = pygame.image.load(os.path.join("tiles", i))
+            self.assets["tiles"][int(i.split(".")[0])] = pygame.transform.scale(pygame.image.load(os.path.join("tiles", i)), (32, 32))
         for i in os.listdir("objects"):
             self.assets["objects"][i.split(".")[0]] = pygame.image.load(os.path.join("objects", i))
         for i in os.listdir("niko"):
@@ -418,35 +463,85 @@ class Game():
         self.textbox_img = pygame.transform.scale(tb, (self.resolution[0] - 20, int((self.resolution[0] - 20) * aspect)))
 
     def mainloop(self):
+        self.running = True
+        
+        if int(self.config.get("Editor", "0")) > 0:
+            self._editor = EditorThread(self)
+            self._editor.start()
+        
         self.clock = pygame.time.Clock()
         self.prev_frame_time = time.time()
         while 1:
-            self.clock.tick(30)
-            
-            self.time = time.time()
-            self.state_map[self.state]()
-            if self.player.held_item != -1:
-                self.display.blit(
-                    self.assets["items2x"][self.player.inventory[self.player.held_item]],
-                    (580, 420)
-                )
-            self.state_frame += 1
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    pygame.display.quit()
-                    pygame.mixer.quit()
-                    pygame.quit()
-                    sys.exit(0)
+            try:
+                self.clock.tick(30)
+                
+                self.time = time.time()
 
-            self.keys = pygame.key.get_pressed()
-            pygame.display.flip()
-            self.prev_frame_time = self.time
+                self.keys = pygame.key.get_pressed()
+                self.state_map[self.state]()
+                x = self.objects.copy()
+                for i in x:
+                    i.update()
+                self.state_map[self.state]()
+                
+                if self.player.held_item != -1:
+                    self.display.blit(
+                        self.assets["items2x"][self.player.inventory[self.player.held_item]],
+                        (580, 420)
+                    )
+                self.state_frame += 1
+                for ev in pygame.event.get():
+                    if ev.type == pygame.QUIT:
+                        pygame.display.quit()
+                        pygame.mixer.quit()
+                        pygame.quit()
+                        self.running = False
+
+                if not self.running:
+                    break
+
+                pygame.display.flip()
+                self.prev_frame_time = self.time
+
+                for i, x in enumerate(self.scheduled_inputs):
+                    x[0].trigger_input(x[1], x[2])
+                    self.scheduled_inputs[i] = None
+                while 1:
+                    try:
+                        del self.scheduled_inputs[self.scheduled_inputs.index(None)]
+                    except ValueError:
+                        break
+    
+            except KeyboardInterrupt:
+                print("Entering interactive shell. The game object is available under 'self'.", file=sys.stderr)
+                print("Type 'resume' to resume the game.", file=sys.stderr)
+                t = threading.Thread(target=_Resume.interact, kwargs={"local": locals(), "banner": ""})
+                t.start()
+                while t.is_alive():
+                    for event in pygame.event.get():
+                        pass
+                    pygame.display.flip()
+                    time.sleep(.1)
+                print("Resuming game.")
+
+            except Exception as e:
+                import tkinter as tk
+                from tkinter import messagebox
+                root = tk.Tk()
+                root.withdraw()
+                self.LogError(traceback.format_exc())
+                messagebox.showerror("Error", e.__class__.__name__ + ": " + str(e), master=root)
+                pygame.display.quit()
+                pygame.quit()
+                self.running = False
+                return
 
     def switch_state(self, name):
         if self.changing_state:
             self.change_state_last = name
         else:
             print("state changed to", name)
+            # traceback.print_stack()
             self.state = name
             self.state_frame = 0
             self.mode = 0
@@ -463,6 +558,7 @@ class Game():
         
     def load_level(self, n):
         self.layer1, self.layer2, self.layer3, self.objects = self.decode(self.levels[n])
+        self.objects = OrderedSet(self.objects)
 
     def LogInfo(self, x):
         print(x)
@@ -474,7 +570,7 @@ class Game():
         print(x, file=sys.stderr)
 
     def decode(game, level):
-        try:
+        # try:
             lists_raw = level.split("°")
 
             list1_raw = lists_raw[0].split("÷")[:-1]
@@ -497,9 +593,10 @@ class Game():
                 objects.append(NAME2OBJTYPE[type](name, kvs, game))
 
             return Layer(list1_raw, game), Layer(list2_raw, game), Layer(list3_raw, game), set(objects)
-        except IndexError:
-            traceback.print_exc()
-            return Layer([], game), Layer([], game), Layer([], game), set()
+        
+        # except IndexError:
+            # traceback.print_exc()
+            # return Layer([], game), Layer([], game), Layer([], game), set()
 
 if __name__ == "__main__":
     game = Game()
