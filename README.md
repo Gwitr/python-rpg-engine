@@ -1,5 +1,5 @@
 # python-rpg-engine
-Compatible with: https://scratch.mit.edu/projects/396439240/ (also by me)
+Compatible with: eh dw about it
 
 
 To use this engine, you need to create the following folders:
